@@ -1,0 +1,40 @@
+#!/bin/bash
+
+if ! source ../venv/bin/activate; then
+  echo "Failed to activate virtual environment"
+  exit 1
+fi
+
+# Dynamically set the log file name based on the parameters
+folder_name=${1:-"final"}
+initial_lr=${3:-0.000001}
+max_lr=${4:-0.0001}
+batch_size=${5:-64}
+epochs=${6:-3000}
+gen_adv_weight=${7:-1e-3}
+noise_std=${8:-0.05}
+conv_dropout=${9:-0.2}
+connected_dropout=${10:-0.3}
+
+mkdir -p "models/$folder_name"
+
+log_file="models/$folder_name/logs.log"
+
+# Print job name and system information
+echo "Start time: $(date)" > "$log_file"
+
+# Run the Python script and redirect output to the log file
+{   echo "Added tracking of MSE in validation set of velocity only"
+    echo "Running SRGAN with parameters:"
+    echo "Folder name: $folder_name"
+    echo "Batch size: $batch_size"
+    echo "Epochs: $epochs"
+    echo "Dropout Conv: $conv_dropout"
+    echo "Dropout fully-connected: $connected_dropout"
+    echo "LR with warmup and cosine decay (initial=$initial_lr, max=$max_lr)"
+    echo "discriminator noise std: $noise_std"
+    echo "RGB = v_x, v_y, temperature (standarized)"
+
+    # Measure execution time
+    time python "SRGAN_refactored.py" --folder_name "$folder_name" --initial_lr "$initial_lr" --max_lr "$max_lr" --batch_size "$batch_size" --epochs "$epochs" --gen_adv_weight "$gen_adv_weight" --noise_std "$noise_std" --conv_dropout "$conv_dropout" --connected_dropout "$connected_dropout"
+} &>> "$log_file"

@@ -108,53 +108,72 @@ def apply_crops(arr, coords, crop_size=64):
         crops.append(crop)
     return np.stack(crops)
 
-
-# Get crop coordinates from any one variable
+# Step 1: Split full data
 t, h, w = data["temp"].shape
-crop_coords = get_crop_coords(t, h, w, crop_size=64, num_crops=3, seed=42)
-
-# Apply same crop coordinates to all variables
-for var in data:
-    arr = data[var]
-    data[var] = apply_crops(arr, crop_coords, crop_size=64)
-
-############### Standardize
-
-scalers = {}
-train_time = 3*365 
-
-for var in ['temp', 'vx', 'vy', 'ssh']:
-    arr = data[var]  # shape: (time, 64, 64)
-    train = arr[:train_time]  # full 3 years for training
-    n, h, w = train.shape
-
-    scaler = StandardScaler()
-    scaler.fit(train.reshape(-1, 1)) # flatten for fitting
-    scalers[var] = scaler
-
-
-for var in data:
-    arr = data[var]
-    n, h, w = arr.shape
-    # flatten to scale, then unflatten
-    data[var] = scalers[var.split('_')[0]].transform(arr.reshape(-1, 1)).reshape(n, h, w)
-
-# Save scalers to un-standardize predictions
-os.makedirs("scalers", exist_ok=True)
-
-for var, scaler in scalers.items():
-    joblib.dump(scaler, f"scalers/{var}.pkl")
-
-############### Split data
+train_time = 365
+val_time = train_time + 365 // 2
 
 split_data = {}
-
-val_time = train_time + 3*365//2
-
 for var in data:
     split_data[f"{var}_train"] = data[var][:train_time]
     split_data[f"{var}_val"] = data[var][train_time:val_time]
     split_data[f"{var}_test"] = data[var][val_time:]
+
+# Step 2: Generate crop coordinates (all random, but only train has >1 per t)
+crop_size = 64
+
+train_coords = get_crop_coords(
+    t=split_data["temp_train"].shape[0],
+    h=h, w=w,
+    crop_size=crop_size,
+    num_crops=6,  # data augmentation
+    seed=42
+)
+
+val_coords = get_crop_coords(
+    t=split_data["temp_val"].shape[0],
+    h=h, w=w,
+    crop_size=crop_size,
+    num_crops=1,
+    seed=43  # different seed to get new (but consistent) crops
+)
+
+test_coords = get_crop_coords(
+    t=split_data["temp_test"].shape[0],
+    h=h, w=w,
+    crop_size=crop_size,
+    num_crops=1,
+    seed=44
+)
+
+
+# Step 3: Apply crops to all variables
+for var in ['temp', 'vx', 'vy', 'ssh']:
+    split_data[f"{var}_train"] = apply_crops(split_data[f"{var}_train"], train_coords, crop_size)
+    split_data[f"{var}_val"] = apply_crops(split_data[f"{var}_val"], val_coords, crop_size)
+    split_data[f"{var}_test"] = apply_crops(split_data[f"{var}_test"], test_coords, crop_size)
+
+
+# Step 4: Standardize (fit only on training data)
+scalers = {}
+
+for var in ['temp', 'vx', 'vy', 'ssh']:
+    arr = split_data[f"{var}_train"]
+    scaler = StandardScaler()
+    scaler.fit(arr.reshape(-1, 1))
+    scalers[var] = scaler
+
+for key in split_data:
+    var = key.split('_')[0]
+    arr = split_data[key]
+    n, h, w = arr.shape
+    split_data[key] = scalers[var].transform(arr.reshape(-1, 1)).reshape(n, h, w)
+
+
+# Step 5: Save scalers
+os.makedirs("scalers", exist_ok=True)
+for var, scaler in scalers.items():
+    joblib.dump(scaler, f"scalers/{var}.pkl")
 
 
 ################ Gaussian blur + spatial subsampling
@@ -192,6 +211,14 @@ for key, value in split_data.items():
 ############ Save data
 
 path = os.path.join(os.getcwd(), "data")
+
+center = len(lat) // 2
+half = 64 // 2
+lat = lat[center - half : center + half]
+
+center = len(lng) // 2
+half = 64 // 2
+lng = lng[center - half : center + half]
 
 np.save(f"{path}/lat.npy", lat)
 np.save(f"{path}/lng.npy", lng)
